@@ -50,9 +50,11 @@ using InstrId = rabbitizer::InstrId::UniqueId;
 using RegId = rabbitizer::Registers::Cpu::GprO32;
 
 bool analyze_instruction(const rabbitizer::InstructionCpu& instr, const RecompPort::Function& func, RecompPort::FunctionStats& stats,
-	RegState reg_states[32], std::vector<RegState>& stack_states) {
+	RegState reg_states[32], std::vector<RegState>& stack_states, bool prev_instruction_was_likely) {
 	// Temporary register state for tracking the register being operated on
 	RegState temp{};
+
+	bool print_stuff = false;//func.vram == 0x8004DCC0;
 
 	int rd = (int)instr.GetO32_rd();
 	int rs = (int)instr.GetO32_rs();
@@ -90,8 +92,10 @@ bool analyze_instruction(const rabbitizer::InstructionCpu& instr, const RecompPo
 			reg_states[rt].prev_addiu_vram = (int16_t)imm;
 			reg_states[rt].valid_addiu = true;
 		} else {
-			// Otherwise, there have been 2 or more consecutive addius so invalidate the whole register
-			reg_states[rt].invalidate();
+			if (!prev_instruction_was_likely) {
+				// Otherwise, there have been 2 or more consecutive addius so invalidate the whole register
+				reg_states[rt].invalidate();
+			}
 		}
 		break;
 	case InstrId::cpu_addu:
@@ -156,7 +160,7 @@ bool analyze_instruction(const rabbitizer::InstructionCpu& instr, const RecompPo
 			temp = stack_states[stack_offset];
 		}
 		// If the base register has a valid lui state and a valid addend before this, then this may be a load from a jump table
-		else if (reg_states[base].valid_lui && reg_states[base].valid_addend) {
+		else if (reg_states[base].valid_lui /*&& reg_states[base].valid_addend*/) {
 			// Exactly one of the lw and the base reg should have a valid lo16 value
 			bool nonzero_immediate = imm != 0;
 			if (nonzero_immediate != reg_states[base].valid_addiu) {
@@ -201,7 +205,10 @@ bool analyze_instruction(const rabbitizer::InstructionCpu& instr, const RecompPo
 			);
 		}
 		// Allow tail calls (TODO account for trailing nops due to bad function splits)
-		else if (instr.getVram() != func.vram + (func.words.size() - 2) * sizeof(func.words[0])) {
+		else if (instr.getVram() == func.vram + (func.words.size() - 2) * sizeof(func.words[0])) {
+			;
+		}
+		else {
 			// Inconclusive analysis
 			fmt::print(stderr, "Failed to to find jump table for `jr {}` at 0x{:08X} in {}\n", RabbitizerRegister_getNameGpr(rs), instr.getVram(), func.name);
 			return false;
@@ -216,6 +223,17 @@ bool analyze_instruction(const rabbitizer::InstructionCpu& instr, const RecompPo
 		}
 		break;
 	}
+
+	if (print_stuff) {
+		base = 10;
+		fmt::print(stdout, "0x{:08X}: {}\n", instr.getVram(), instr.disassemble(0));
+		fmt::print(stdout, "  base: {} {}\n", base, RabbitizerRegister_getNameGpr(base));
+		fmt::print(stdout, "  base == (int)RegId::GPR_O32_sp: {}\n", base == (int)RegId::GPR_O32_sp);
+		fmt::print(stdout, "  reg_states[base].valid_lui: {}\n", reg_states[base].valid_lui);
+		fmt::print(stdout, "  reg_states[base].valid_addend: {}\n", reg_states[base].valid_addend);
+		fmt::print(stdout, "\n");
+	}
+
 	return true;
 }
 
@@ -224,13 +242,15 @@ bool RecompPort::analyze_function(const RecompPort::Context& context, const Reco
 	// Create a state to track each register (r0 won't be used)
 	RegState reg_states[32] {};
 	std::vector<RegState> stack_states{};
+	bool prev_instruction_was_likely = false;
 
 	// Look for jump tables
 	// A linear search through the func won't be accurate due to not taking control flow into account, but it'll work for finding jtables
 	for (const auto& instr : instructions) {
-		if (!analyze_instruction(instr, func, stats, reg_states, stack_states)) {
+		if (!analyze_instruction(instr, func, stats, reg_states, stack_states, prev_instruction_was_likely)) {
 			return false;
 		}
+		prev_instruction_was_likely = instr.isBranchLikely();
 	}
 
 	// Sort jump tables by their address
