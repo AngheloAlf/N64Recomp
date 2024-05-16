@@ -527,6 +527,25 @@ std::unordered_set<std::string> ignored_funcs {
     "func_8025C29C",
     "func_8025C240",
     "func_8025C288",
+
+    // rmonregs
+    "LoadStoreSU",
+    "LoadStoreVU",
+    "SetUpForRCPop",
+    "CleanupFromRCPop",
+    "__rmonGetGRegisters",
+    "__rmonSetGRegisters",
+    "__rmonGetFRegisters",
+    "__rmonSetFRegisters",
+    "rmonGetRcpRegister",
+    "__rmonGetSRegs",
+    "__rmonSetSRegs",
+    "__rmonGetVRegs",
+    "__rmonSetVRegs",
+    "__rmonGetRegisterContents",
+
+    "__osError",
+    "__ptExceptionPreamble",
 };
 
 std::unordered_set<std::string> renamed_funcs{
