@@ -544,6 +544,39 @@ std::unordered_set<std::string> ignored_funcs {
     "__rmonSetVRegs",
     "__rmonGetRegisterContents",
 
+    // rmonbrk
+    "SetTempBreakpoint",
+    "ClearTempBreakpoint",
+    "__rmonSetBreak",
+    "__rmonListBreak",
+    "__rmonClearBreak",
+    "__rmonGetBranchTarget",
+    "IsJump",
+    "__rmonSetSingleStep",
+    "__rmonGetExceptionStatus",
+    "rmonSendBreakMessage",
+    "__rmonHitBreak",
+    "__rmonHitSpBreak",
+    "__rmonHitCpuFault",
+    "rmonFindFaultedThreads",
+
+    // kdebugserver
+    "string_to_u32",
+    "send_packet",
+    "clear_IP6",
+    "send",
+    "kdebugserver",
+
+    // reverb
+    // "alFxPull",
+    // "alFxParam",
+    // "alFxParamHdl",
+    // "_loadOutputBuffer",
+    // "_loadBuffer",
+    // "_saveBuffer",
+    // "_filterBuffer",
+    // "_doModFunc",
+
     "__osError",
     "__ptExceptionPreamble",
 };
