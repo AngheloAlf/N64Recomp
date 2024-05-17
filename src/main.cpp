@@ -369,6 +369,8 @@ std::unordered_set<std::string> ignored_funcs {
     // exceptasm functions
     "__osExceptionPreamble",
     "__osException",
+    "__ptExceptionPreamble",
+    "__ptException",
     "send_mesg",
     "handle_CpU",
     "__osEnqueueAndYield",
@@ -578,7 +580,6 @@ std::unordered_set<std::string> ignored_funcs {
     // "_doModFunc",
 
     "__osError",
-    "__ptExceptionPreamble",
 };
 
 std::unordered_set<std::string> renamed_funcs{

@@ -529,7 +529,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
                 print_line("pause_self(rdram)");
             }
             // Check if the branch is within this function
-            else if (branch_target >= func.vram && branch_target < func_vram_end) {
+            if (branch_target >= func.vram && branch_target < func_vram_end) {
                 print_unconditional_branch("goto L_{:08X}", branch_target);
             }
             // This may be a tail call in the middle of the control flow due to a previous check
