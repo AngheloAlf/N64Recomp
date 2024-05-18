@@ -4,13 +4,16 @@ N64: Recompiled is a tool to statically recompile N64 binaries into C code that 
 This is not the first project that uses static recompilation on game console binaries. A well known example is [jamulator](https://github.com/andrewrk/jamulator), which targets NES binaries. Additionally, this is not even the first project to apply static recompilation to N64-related projects: the [IDO static recompilation](https://github.com/decompals/ido-static-recomp) recompiles the SGI IRIX IDO compiler on modern systems to faciliate matching decompilation of N64 games. This project works similarly to the IDO static recomp project in some ways, and that project was my main inspiration for making this.
 
 ## Table of Contents
-* [How it Works](#how-it-works)
-* [Overlays](#overlays)
-* [How to Use](#how-to-use)
-* [Single File Output Mode](#single-file-output-mode-for-patches)
-* [RSP Microcode Support](#rsp-microcode-support)
-* [Planned Features](#planned-features)
-* [Building](#building)
+- [N64: Recompiled](#n64-recompiled)
+  - [Table of Contents](#table-of-contents)
+  - [How it Works](#how-it-works)
+  - [Overlays](#overlays)
+  - [How to Use](#how-to-use)
+  - [Single File Output Mode (for Patches)](#single-file-output-mode-for-patches)
+  - [RSP Microcode Support](#rsp-microcode-support)
+  - [Planned Features](#planned-features)
+  - [Building](#building)
+  - [Libraries Used](#libraries-used)
 
 ## How it Works
 The recompiler works by accepting a list of symbols and metadata alongside the binary with the goal of splitting the input binary into functions that are each individually recompiled into a C function, named according to the metadata.
@@ -50,7 +53,18 @@ RSP microcode can also be recompiled with this tool. Currently there is no suppo
 * Ability to recompile into a dynamic language (such as Lua) to be able to load code at runtime for mod support
 
 ## Building
-This project can be built with CMake 3.20 or above and a C++ compiler that supports C++20. This repo uses git submodules, so be sure to clone recursively (`git clone --recurse-submodules`) or initialize submodules recursively after cloning (`git submodule update --init --recursive`). From there, building is identical to any other cmake project, e.g. run `cmake` in the target build folder and point it at the root of this repo, then run `cmake --build .` from that target folder.
+This project can be built with CMake 3.20 or above and a C++ compiler that supports C++20. This repo uses git submodules, so be sure to clone recursively (`git clone --recurse-submodules`) or initialize submodules recursively after cloning (`git submodule update --init --recursive`). From there, building is identical to any other cmake project.
+
+The recommended steps to build this project are as follows:
+
+```bash
+cmake -B build -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j $(nproc) --config Release
+```
+
+The built programs are placed in `build/N64Recomp` and `build/RSPRecomp`.
+
+For development it is recommended to Change the `Release` options with either `Debug` or `RelWithDebInfo`.
 
 ## Libraries Used
 * [rabbitizer](https://github.com/Decompollaborate/rabbitizer) for instruction decoding/analysis
