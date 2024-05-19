@@ -30,7 +30,7 @@ public:
 
     template <typename... Ts>
     void print_line(fmt::format_string<Ts...> fmt_str, Ts ...args) {
-        print_indent();
+        writer.print_indent();
         fmt::vprint(output_file, fmt_str, fmt::make_format_args(args...));
         fmt::print(output_file, ";\n");
     };
@@ -53,7 +53,7 @@ public:
             }
             process_instruction(context, config, func, stats, skipped_insns, instr_index + 1, instructions, output_file, false, false, link_branch_index, next_reloc_index, dummy_needs_link_branch, dummy_is_branch_likely, static_funcs_out);
         }
-        print_indent();
+        writer.print_indent();
         fmt::vprint(output_file, fmt_str, fmt::make_format_args(args...));
         if (needs_link_branch) {
             fmt::print(output_file, ";\n    goto after_{};\n", link_branch_index);
@@ -129,7 +129,7 @@ public:
             }
         }
         needs_link_branch = link_branch;
-        print_unconditional_branch("{}(rdram, ctx)", jal_target_name);
+        writer.print_unconditional_branch("{}(rdram, ctx)", jal_target_name);
         return true;
     };
 
@@ -139,8 +139,8 @@ public:
             if (context.functions_by_vram.find(branch_target) != context.functions_by_vram.end()) {
                 fmt::print(output_file, "{{\n    ");
                 fmt::print("Tail call in {} to 0x{:08X}\n", func.name, branch_target);
-                print_func_call(branch_target, false);
-                print_line("return");
+                writer.print_func_call(branch_target, false);
+                writer.print_line("return");
                 fmt::print(output_file, ";\n    }}\n");
                 return;
             }
@@ -172,6 +172,7 @@ public:
 
 // Major TODO, this function grew very organically and needs to be cleaned up. Ideally, it'll get split up into some sort of lookup table grouped by similar instruction types.
 bool process_instruction(const RecompPort::Context& context, const RecompPort::Config& config, const RecompPort::Function& func, const RecompPort::FunctionStats& stats, const std::unordered_set<uint32_t>& skipped_insns, size_t instr_index, const std::vector<rabbitizer::InstructionCpu>& instructions, std::ofstream& output_file, bool indent, bool emit_link_branch, int link_branch_index, size_t reloc_index, bool& needs_link_branch, bool& is_branch_likely, std::span<std::vector<uint32_t>> static_funcs_out) {
+    InstructionWriter writer{output_file};
     const auto& section = context.sections[func.section_index];
     const auto& instr = instructions[instr_index];
     needs_link_branch = false;
@@ -224,7 +225,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
     }
 
     if (indent) {
-        print_indent();
+        writer.print_indent();
     }
 
     int rd = (int)instr.GetO32_rd();
@@ -274,7 +275,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
             Cop0Reg reg = instr.Get_cop0d();
             switch (reg) {
             case Cop0Reg::COP0_Status:
-                print_line("{}{} = cop0_status_read(ctx)", ctx_gpr_prefix(rt), rt);
+                writer.print_line("{}{} = cop0_status_read(ctx)", ctx_gpr_prefix(rt), rt);
                 break;
             default:
                 fmt::print(stderr, "Unhandled cop0 register in mfc0: {}\n", (int)reg);
@@ -287,7 +288,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
             Cop0Reg reg = instr.Get_cop0d();
             switch (reg) {
             case Cop0Reg::COP0_Status:
-                print_line("cop0_status_write(ctx, {}{})", ctx_gpr_prefix(rt), rt);
+                writer.print_line("cop0_status_write(ctx, {}{})", ctx_gpr_prefix(rt), rt);
                 break;
             default:
                 fmt::print(stderr, "Unhandled cop0 register in mtc0: {}\n", (int)reg);
@@ -297,7 +298,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         }
     // Arithmetic
     case InstrId::cpu_lui:
-        print_line("{}{} = S32({} << 16)", ctx_gpr_prefix(rt), rt, unsigned_imm_string);
+        writer.print_line("{}{} = S32({} << 16)", ctx_gpr_prefix(rt), rt, unsigned_imm_string);
         break;
     case InstrId::cpu_add:
     case InstrId::cpu_addu:
@@ -310,173 +311,173 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
             // If so, create a temp to preserve the addend register's value
             if (find_result != stats.jump_tables.end()) {
                 const RecompPort::JumpTable& cur_jtbl = *find_result;
-                print_line("gpr jr_addend_{:08X} = {}{}", cur_jtbl.jr_vram, ctx_gpr_prefix(cur_jtbl.addend_reg), cur_jtbl.addend_reg);
+                writer.print_line("gpr jr_addend_{:08X} = {}{}", cur_jtbl.jr_vram, ctx_gpr_prefix(cur_jtbl.addend_reg), cur_jtbl.addend_reg);
             }
         }
-        print_line("{}{} = ADD32({}{}, {}{})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = ADD32({}{}, {}{})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_daddu:
-        print_line("{}{} = {}{} + {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = {}{} + {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_negu: // pseudo instruction for subu x, 0, y
     case InstrId::cpu_sub:
     case InstrId::cpu_subu:
-        print_line("{}{} = SUB32({}{}, {}{})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = SUB32({}{}, {}{})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_addi:
     case InstrId::cpu_addiu:
-        print_line("{}{} = ADD32({}{}, {})", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
+        writer.print_line("{}{} = ADD32({}{}, {})", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
         break;
     case InstrId::cpu_daddi:
     case InstrId::cpu_daddiu:
-        print_line("{}{} = {}{} + {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
+        writer.print_line("{}{} = {}{} + {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
         break;
     case InstrId::cpu_and:
-        print_line("{}{} = {}{} & {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = {}{} & {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_andi:
-        print_line("{}{} = {}{} & {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, unsigned_imm_string);
+        writer.print_line("{}{} = {}{} & {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, unsigned_imm_string);
         break;
     case InstrId::cpu_or:
-        print_line("{}{} = {}{} | {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = {}{} | {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_ori:
-        print_line("{}{} = {}{} | {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, unsigned_imm_string);
+        writer.print_line("{}{} = {}{} | {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, unsigned_imm_string);
         break;
     case InstrId::cpu_nor:
-        print_line("{}{} = ~({}{} | {}{})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = ~({}{} | {}{})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_xor:
-        print_line("{}{} = {}{} ^ {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = {}{} ^ {}{}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_xori:
-        print_line("{}{} = {}{} ^ {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, unsigned_imm_string);
+        writer.print_line("{}{} = {}{} ^ {}", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, unsigned_imm_string);
         break;
     case InstrId::cpu_sll:
-        print_line("{}{} = S32({}{}) << {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = S32({}{}) << {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_dsll:
-        print_line("{}{} = {}{} << {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = {}{} << {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_dsll32:
-        print_line("{}{} = ((gpr)({}{})) << ({} + 32)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = ((gpr)({}{})) << ({} + 32)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_sllv:
-        print_line("{}{} = S32({}{}) << ({}{} & 31)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
+        writer.print_line("{}{} = S32({}{}) << ({}{} & 31)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
         break;
     case InstrId::cpu_dsllv:
-        print_line("{}{} = {}{} << ({}{} & 63)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
+        writer.print_line("{}{} = {}{} << ({}{} & 63)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
         break;
     case InstrId::cpu_sra:
-        print_line("{}{} = S32({}{}) >> {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = S32({}{}) >> {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_dsra:
-        print_line("{}{} = SIGNED({}{}) >> {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = SIGNED({}{}) >> {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_dsra32:
-        print_line("{}{} = SIGNED({}{}) >> ({} + 32)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = SIGNED({}{}) >> ({} + 32)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_srav:
-        print_line("{}{} = S32({}{}) >> ({}{} & 31)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
+        writer.print_line("{}{} = S32({}{}) >> ({}{} & 31)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
         break;
     case InstrId::cpu_dsrav:
-        print_line("{}{} = SIGNED({}{}) >> ({}{} & 63)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
+        writer.print_line("{}{} = SIGNED({}{}) >> ({}{} & 63)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
         break;
     case InstrId::cpu_srl:
-        print_line("{}{} = S32(U32({}{}) >> {})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = S32(U32({}{}) >> {})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_dsrl:
-        print_line("{}{} = {}{} >> {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = {}{} >> {}", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_dsrl32:
-        print_line("{}{} = ((gpr)({}{})) >> ({} + 32)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
+        writer.print_line("{}{} = ((gpr)({}{})) >> ({} + 32)", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, sa);
         break;
     case InstrId::cpu_srlv:
-        print_line("{}{} = S32(U32({}{}) >> ({}{} & 31))", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
+        writer.print_line("{}{} = S32(U32({}{}) >> ({}{} & 31))", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
         break;
     case InstrId::cpu_dsrlv:
-        print_line("{}{} = {}{} >> ({}{} & 63))", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
+        writer.print_line("{}{} = {}{} >> ({}{} & 63))", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs);
         break;
     case InstrId::cpu_slt:
-        print_line("{}{} = SIGNED({}{}) < SIGNED({}{}) ? 1 : 0", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = SIGNED({}{}) < SIGNED({}{}) ? 1 : 0", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_slti:
-        print_line("{}{} = SIGNED({}{}) < {} ? 1 : 0", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
+        writer.print_line("{}{} = SIGNED({}{}) < {} ? 1 : 0", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
         break;
     case InstrId::cpu_sltu:
-        print_line("{}{} = {}{} < {}{} ? 1 : 0", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = {}{} < {}{} ? 1 : 0", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_sltiu:
-        print_line("{}{} = {}{} < {} ? 1 : 0", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
+        writer.print_line("{}{} = {}{} < {} ? 1 : 0", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, signed_imm_string);
         break;
     case InstrId::cpu_mult:
-        print_line("result = S64(S32({}{})) * S64(S32({}{})); lo = S32(result >> 0); hi = S32(result >> 32)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("result = S64(S32({}{})) * S64(S32({}{})); lo = S32(result >> 0); hi = S32(result >> 32)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_dmult:
-        print_line("DMULT(S64({}{}), S64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("DMULT(S64({}{}), S64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_multu:
-        print_line("result = U64(U32({}{})) * U64(U32({}{})); lo = S32(result >> 0); hi = S32(result >> 32)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("result = U64(U32({}{})) * U64(U32({}{})); lo = S32(result >> 0); hi = S32(result >> 32)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_dmultu:
-        print_line("DMULTU(U64({}{}), U64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("DMULTU(U64({}{}), U64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_div:
         // Cast to 64-bits before division to prevent artihmetic exception for s32(0x80000000) / -1
-        print_line("lo = S32(S64(S32({}{})) / S64(S32({}{}))); hi = S32(S64(S32({}{})) % S64(S32({}{})))", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("lo = S32(S64(S32({}{})) / S64(S32({}{}))); hi = S32(S64(S32({}{})) % S64(S32({}{})))", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_ddiv:
-        print_line("DDIV(S64({}{}), S64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("DDIV(S64({}{}), S64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_divu:
-        print_line("lo = S32(U32({}{}) / U32({}{})); hi = S32(U32({}{}) % U32({}{}))", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("lo = S32(U32({}{}) / U32({}{})); hi = S32(U32({}{}) % U32({}{}))", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_ddivu:
-        print_line("DDIVU(U64({}{}), U64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_line("DDIVU(U64({}{}), U64({}{}), &lo, &hi)", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_mflo:
-        print_line("{}{} = lo", ctx_gpr_prefix(rd), rd);
+        writer.print_line("{}{} = lo", ctx_gpr_prefix(rd), rd);
         break;
     case InstrId::cpu_mfhi:
-        print_line("{}{} = hi", ctx_gpr_prefix(rd), rd);
+        writer.print_line("{}{} = hi", ctx_gpr_prefix(rd), rd);
         break;
     case InstrId::cpu_mtlo:
-        print_line("lo = {}{}", ctx_gpr_prefix(rd), rd);
+        writer.print_line("lo = {}{}", ctx_gpr_prefix(rd), rd);
         break;
     case InstrId::cpu_mthi:
-        print_line("hi = {}{}", ctx_gpr_prefix(rd), rd);
+        writer.print_line("hi = {}{}", ctx_gpr_prefix(rd), rd);
         break;
     // Loads
     case InstrId::cpu_ld:
-        print_line("{}{} = LD({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = LD({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_lw:
-        print_line("{}{} = MEM_W({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = MEM_W({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_lh:
-        print_line("{}{} = MEM_H({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = MEM_H({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_lb:
-        print_line("{}{} = MEM_B({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = MEM_B({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_lhu:
-        print_line("{}{} = MEM_HU({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = MEM_HU({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_lbu:
-        print_line("{}{} = MEM_BU({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = MEM_BU({}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     // Stores
     case InstrId::cpu_sd:
-        print_line("SD({}{}, {}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("SD({}{}, {}, {}{})", ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_sw:
-        print_line("MEM_W({}, {}{}) = {}{}", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
+        writer.print_line("MEM_W({}, {}{}) = {}{}", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_sh:
-        print_line("MEM_H({}, {}{}) = {}{}", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
+        writer.print_line("MEM_H({}, {}{}) = {}{}", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_sb:
-        print_line("MEM_B({}, {}{}) = {}{}", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
+        writer.print_line("MEM_B({}, {}{}) = {}{}", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
         break;
     // Unaligned loads
     // examples:
@@ -493,10 +494,10 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
     // LWR x + 2 -> 00000000 0189ABCD
     // LWR x + 3 -> FFFFFFFF 89ABCDEF
     case InstrId::cpu_lwl:
-        print_line("{}{} = do_lwl(rdram, {}{}, {}, {}{})", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = do_lwl(rdram, {}{}, {}, {}{})", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_lwr:
-        print_line("{}{} = do_lwr(rdram, {}{}, {}, {}{})", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("{}{} = do_lwr(rdram, {}{}, {}, {}{})", ctx_gpr_prefix(rt), rt, ctx_gpr_prefix(rt), rt, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     // Unaligned stores
     // examples:
@@ -513,15 +514,15 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
     // SWR x + 2 ->          234567EF
     // SWR x + 3 ->          01234567
     case InstrId::cpu_swl:
-        print_line("do_swl(rdram, {}, {}{}, {}{})", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
+        writer.print_line("do_swl(rdram, {}, {}{}, {}{})", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_swr:
-        print_line("do_swr(rdram, {}, {}{}, {}{})", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
+        writer.print_line("do_swr(rdram, {}, {}{}, {}{})", signed_imm_string, ctx_gpr_prefix(base), base, ctx_gpr_prefix(rt), rt);
         break;
 
     // Branches
     case InstrId::cpu_jal:
-        print_func_call(instr.getBranchVramGeneric());
+        writer.print_func_call(instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_jalr:
         // jalr can only be handled with $ra as the return address register
@@ -530,18 +531,18 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
             return false;
         }
         needs_link_branch = true;
-        print_unconditional_branch("LOOKUP_FUNC({}{})(rdram, ctx)", ctx_gpr_prefix(rs), rs);
+        writer.print_unconditional_branch("LOOKUP_FUNC({}{})(rdram, ctx)", ctx_gpr_prefix(rs), rs);
         break;
     case InstrId::cpu_j:
     case InstrId::cpu_b:
         {
             uint32_t branch_target = instr.getBranchVramGeneric();
             if (branch_target == instr_vram) {
-                print_line("pause_self(rdram)");
+                writer.print_line("pause_self(rdram)");
             }
             // Check if the branch is within this function
             else if (branch_target >= func.vram && branch_target < func_vram_end) {
-                print_unconditional_branch("goto L_{:08X}", branch_target);
+                writer.print_unconditional_branch("goto L_{:08X}", branch_target);
             }
             // This may be a tail call in the middle of the control flow due to a previous check
             // For example:
@@ -557,8 +558,8 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
             // FIXME: how to deal with static functions?
             else if (context.functions_by_vram.find(branch_target) != context.functions_by_vram.end()) {
                 fmt::print("Tail call in {} to 0x{:08X}\n", func.name, branch_target);
-                print_func_call(branch_target, false);
-                print_line("return");
+                writer.print_func_call(branch_target, false);
+                writer.print_line("return");
             }
             else {
                 fmt::print(stderr, "Unhandled branch in {} at 0x{:08X} to 0x{:08X}\n", func.name, instr_vram, branch_target);
@@ -568,7 +569,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         break;
     case InstrId::cpu_jr:
         if (rs == (int)rabbitizer::Registers::Cpu::GprO32::GPR_O32_ra) {
-            print_unconditional_branch("return");
+            writer.print_unconditional_branch("return");
         } else {
             auto jtbl_find_result = std::find_if(stats.jump_tables.begin(), stats.jump_tables.end(),
                 [instr_vram](const RecompPort::JumpTable& jtbl) {
@@ -584,15 +585,15 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
                     next_reloc_index++;
                 }
                 process_instruction(context, config, func, stats, skipped_insns, instr_index + 1, instructions, output_file, false, false, link_branch_index, next_reloc_index, dummy_needs_link_branch, dummy_is_branch_likely, static_funcs_out);
-                print_indent();
+                writer.print_indent();
                 fmt::print(output_file, "switch (jr_addend_{:08X} >> 2) {{\n", cur_jtbl.jr_vram);
                 for (size_t entry_index = 0; entry_index < cur_jtbl.entries.size(); entry_index++) {
-                    print_indent();
-                    print_line("case {}: goto L_{:08X}; break", entry_index, cur_jtbl.entries[entry_index]);
+                    writer.print_indent();
+                    writer.print_line("case {}: goto L_{:08X}; break", entry_index, cur_jtbl.entries[entry_index]);
                 }
-                print_indent();
-                print_line("default: switch_error(__func__, 0x{:08X}, 0x{:08X})", instr_vram, cur_jtbl.vram);
-                print_indent();
+                writer.print_indent();
+                writer.print_line("default: switch_error(__func__, 0x{:08X}, 0x{:08X})", instr_vram, cur_jtbl.vram);
+                writer.print_indent();
                 fmt::print(output_file, "}}\n");
                 break;
             }
@@ -603,17 +604,17 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
             });
 
             if (jump_find_result != stats.absolute_jumps.end()) {
-                print_unconditional_branch("LOOKUP_FUNC({})(rdram, ctx)", (uint64_t)(int32_t)jump_find_result->jump_target);
+                writer.print_unconditional_branch("LOOKUP_FUNC({})(rdram, ctx)", (uint64_t)(int32_t)jump_find_result->jump_target);
                 // jr doesn't link so it acts like a tail call, meaning we should return directly after the jump returns
-                print_line("return");
+                writer.print_line("return");
                 break;
             }
 
             bool is_tail_call = instr_vram == func_vram_end - 2 * sizeof(func.words[0]);
             if (is_tail_call) {
                 fmt::print("Indirect tail call in {}\n", func.name);
-                print_unconditional_branch("LOOKUP_FUNC({}{})(rdram, ctx)", ctx_gpr_prefix(rs), rs);
-                print_line("return");
+                writer.print_unconditional_branch("LOOKUP_FUNC({}{})(rdram, ctx)", ctx_gpr_prefix(rs), rs);
+                writer.print_line("return");
                 break;
             }
 
@@ -621,95 +622,95 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         }
         break;
     case InstrId::cpu_syscall:
-        print_line("recomp_syscall_handler(rdram, ctx, 0x{:08X})", instr_vram);
+        writer.print_line("recomp_syscall_handler(rdram, ctx, 0x{:08X})", instr_vram);
         // syscalls don't link, so treat it like a tail call
-        print_line("return");
+        writer.print_line("return");
         break;
     case InstrId::cpu_bnel:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_bne:
-        print_indent();
-        print_branch_condition("if ({}{} != {}{})", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if ({}{} != {}{})", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_beql:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_beq:
-        print_indent();
-        print_branch_condition("if ({}{} == {}{})", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if ({}{} == {}{})", ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_bgezl:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_bgez:
-        print_indent();
-        print_branch_condition("if (SIGNED({}{}) >= 0)", ctx_gpr_prefix(rs), rs);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if (SIGNED({}{}) >= 0)", ctx_gpr_prefix(rs), rs);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_bgtzl:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_bgtz:
-        print_indent();
-        print_branch_condition("if (SIGNED({}{}) > 0)", ctx_gpr_prefix(rs), rs);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if (SIGNED({}{}) > 0)", ctx_gpr_prefix(rs), rs);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_blezl:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_blez:
-        print_indent();
-        print_branch_condition("if (SIGNED({}{}) <= 0)", ctx_gpr_prefix(rs), rs);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if (SIGNED({}{}) <= 0)", ctx_gpr_prefix(rs), rs);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_bltzl:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_bltz:
-        print_indent();
-        print_branch_condition("if (SIGNED({}{}) < 0)", ctx_gpr_prefix(rs), rs);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if (SIGNED({}{}) < 0)", ctx_gpr_prefix(rs), rs);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_break:
-        print_line("do_break({})", instr_vram);
+        writer.print_line("do_break({})", instr_vram);
         break;
     case InstrId::cpu_bgezall:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_bgezal:
-        print_indent();
-        print_branch_condition("if (SIGNED({}{}) >= 0) {{", ctx_gpr_prefix(rs), rs);
-        print_func_call(instr.getBranchVramGeneric());
-        print_line("}}");
+        writer.print_indent();
+        writer.print_branch_condition("if (SIGNED({}{}) >= 0) {{", ctx_gpr_prefix(rs), rs);
+        writer.print_func_call(instr.getBranchVramGeneric());
+        writer.print_line("}}");
         break;
 
     // Cop1 loads/stores
     case InstrId::cpu_mtc1:
         if ((fs & 1) == 0) {
             // even fpr
-            print_line("ctx->f{}.u32l = {}{}", fs, ctx_gpr_prefix(rt), rt);
+            writer.print_line("ctx->f{}.u32l = {}{}", fs, ctx_gpr_prefix(rt), rt);
         }
         else {
             // odd fpr
-            print_line("ctx->f_odd[({} - 1) * 2] = {}{}", fs, ctx_gpr_prefix(rt), rt);
+            writer.print_line("ctx->f_odd[({} - 1) * 2] = {}{}", fs, ctx_gpr_prefix(rt), rt);
         }
         break;
     case InstrId::cpu_mfc1:
         if ((fs & 1) == 0) {
             // even fpr
-            print_line("{}{} = (int32_t)ctx->f{}.u32l", ctx_gpr_prefix(rt), rt, fs);
+            writer.print_line("{}{} = (int32_t)ctx->f{}.u32l", ctx_gpr_prefix(rt), rt, fs);
         } else {
             // odd fpr
-            print_line("{}{} = (int32_t)ctx->f_odd[({} - 1) * 2]", ctx_gpr_prefix(rt), rt, fs);
+            writer.print_line("{}{} = (int32_t)ctx->f_odd[({} - 1) * 2]", ctx_gpr_prefix(rt), rt, fs);
         }
         break;
     //case InstrId::cpu_dmfc1:
     //    if ((fs & 1) == 0) {
     //        // even fpr
-    //        print_line("{}{} = ctx->f{}.u64", ctx_gpr_prefix(rt), rt, fs);
+    //        writer.print_line("{}{} = ctx->f{}.u64", ctx_gpr_prefix(rt), rt, fs);
     //    } else {
     //        fmt::print(stderr, "Invalid operand for dmfc1: f{}\n", fs);
     //        return false;
@@ -718,131 +719,131 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
     case InstrId::cpu_lwc1:
         if ((ft & 1) == 0) {
             // even fpr
-            print_line("ctx->f{}.u32l = MEM_W({}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
+            writer.print_line("ctx->f{}.u32l = MEM_W({}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
         } else {
             // odd fpr
-            print_line("ctx->f_odd[({} - 1) * 2] = MEM_W({}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
+            writer.print_line("ctx->f_odd[({} - 1) * 2] = MEM_W({}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
         }
         break;
     case InstrId::cpu_ldc1:
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("ctx->f{}.u64 = LD({}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("ctx->f{}.u64 = LD({}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
     case InstrId::cpu_swc1:
         if ((ft & 1) == 0) {
             // even fpr
-            print_line("MEM_W({}, {}{}) = ctx->f{}.u32l", signed_imm_string, ctx_gpr_prefix(base), base, ft);
+            writer.print_line("MEM_W({}, {}{}) = ctx->f{}.u32l", signed_imm_string, ctx_gpr_prefix(base), base, ft);
         } else {
             // odd fpr
-            print_line("MEM_W({}, {}{}) = ctx->f_odd[({} - 1) * 2]", signed_imm_string, ctx_gpr_prefix(base), base, ft);
+            writer.print_line("MEM_W({}, {}{}) = ctx->f_odd[({} - 1) * 2]", signed_imm_string, ctx_gpr_prefix(base), base, ft);
         }
         break;
     case InstrId::cpu_sdc1:
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("SD(ctx->f{}.u64, {}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("SD(ctx->f{}.u64, {}, {}{})", ft, signed_imm_string, ctx_gpr_prefix(base), base);
         break;
 
     // Cop1 compares
     // TODO allow NaN in ordered and unordered float comparisons, default to a compare result of 1 for ordered and 0 for unordered if a NaN is present
     case InstrId::cpu_c_lt_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl < ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl < ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_olt_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl < ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl < ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_ult_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl < ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl < ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_lt_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d < ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d < ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_olt_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d < ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d < ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_ult_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d < ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d < ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_le_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl <= ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl <= ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_ole_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl <= ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl <= ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_ule_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl <= ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl <= ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_le_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d <= ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d <= ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_ole_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d <= ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d <= ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_ule_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d <= ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d <= ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_eq_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_ueq_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_ngl_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_seq_s:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.fl == ctx->f{}.fl", fs, ft);
         break;
     case InstrId::cpu_c_eq_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_ueq_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_ngl_d:
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
         break;
     case InstrId::cpu_c_deq_d: // TODO rename to c_seq_d when fixed in rabbitizer
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("c1cs = ctx->f{}.d == ctx->f{}.d", fs, ft);
         break;
     
     // Cop1 branches
@@ -850,239 +851,239 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_bc1t:
-        print_indent();
-        print_branch_condition("if (c1cs)", ctx_gpr_prefix(rs), rs);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if (c1cs)", ctx_gpr_prefix(rs), rs);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
     case InstrId::cpu_bc1fl:
         is_branch_likely = true;
         [[fallthrough]];
     case InstrId::cpu_bc1f:
-        print_indent();
-        print_branch_condition("if (!c1cs)", ctx_gpr_prefix(rs), rs);
-        print_branch((uint32_t)instr.getBranchVramGeneric());
+        writer.print_indent();
+        writer.print_branch_condition("if (!c1cs)", ctx_gpr_prefix(rs), rs);
+        writer.print_branch((uint32_t)instr.getBranchVramGeneric());
         break;
 
     // Cop1 arithmetic
     case InstrId::cpu_mov_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.fl = ctx->f{}.fl", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.fl = ctx->f{}.fl", fd, fs);
         break;
     case InstrId::cpu_mov_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.d = ctx->f{}.d", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.d = ctx->f{}.d", fd, fs);
         break;
     case InstrId::cpu_neg_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.fl)", fs);
-        print_line("ctx->f{}.fl = -ctx->f{}.fl", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl)", fs);
+        writer.print_line("ctx->f{}.fl = -ctx->f{}.fl", fd, fs);
         break;
     case InstrId::cpu_neg_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.d)", fs);
-        print_line("ctx->f{}.d = -ctx->f{}.d", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.d)", fs);
+        writer.print_line("ctx->f{}.d = -ctx->f{}.d", fd, fs);
         break;
     case InstrId::cpu_abs_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.fl)", fs);
-        print_line("ctx->f{}.fl = fabsf(ctx->f{}.fl)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl)", fs);
+        writer.print_line("ctx->f{}.fl = fabsf(ctx->f{}.fl)", fd, fs);
         break;
     case InstrId::cpu_abs_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.d)", fs);
-        print_line("ctx->f{}.d = fabs(ctx->f{}.d)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.d)", fs);
+        writer.print_line("ctx->f{}.d = fabs(ctx->f{}.d)", fd, fs);
         break;
     case InstrId::cpu_sqrt_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.fl)", fs);
-        print_line("ctx->f{}.fl = sqrtf(ctx->f{}.fl)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl)", fs);
+        writer.print_line("ctx->f{}.fl = sqrtf(ctx->f{}.fl)", fd, fs);
         break;
     case InstrId::cpu_sqrt_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.d)", fs);
-        print_line("ctx->f{}.d = sqrt(ctx->f{}.d)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.d)", fs);
+        writer.print_line("ctx->f{}.d = sqrt(ctx->f{}.d)", fd, fs);
         break;
     case InstrId::cpu_add_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
-        print_line("ctx->f{}.fl = ctx->f{}.fl + ctx->f{}.fl", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
+        writer.print_line("ctx->f{}.fl = ctx->f{}.fl + ctx->f{}.fl", fd, fs, ft);
         break;
     case InstrId::cpu_add_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
-        print_line("ctx->f{}.d = ctx->f{}.d + ctx->f{}.d", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
+        writer.print_line("ctx->f{}.d = ctx->f{}.d + ctx->f{}.d", fd, fs, ft);
         break;
     case InstrId::cpu_sub_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
-        print_line("ctx->f{}.fl = ctx->f{}.fl - ctx->f{}.fl", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
+        writer.print_line("ctx->f{}.fl = ctx->f{}.fl - ctx->f{}.fl", fd, fs, ft);
         break;
     case InstrId::cpu_sub_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
-        print_line("ctx->f{}.d = ctx->f{}.d - ctx->f{}.d", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
+        writer.print_line("ctx->f{}.d = ctx->f{}.d - ctx->f{}.d", fd, fs, ft);
         break;
     case InstrId::cpu_mul_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
-        print_line("ctx->f{}.fl = MUL_S(ctx->f{}.fl, ctx->f{}.fl)", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
+        writer.print_line("ctx->f{}.fl = MUL_S(ctx->f{}.fl, ctx->f{}.fl)", fd, fs, ft);
         break;
     case InstrId::cpu_mul_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
-        print_line("ctx->f{}.d = MUL_D(ctx->f{}.d, ctx->f{}.d)", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
+        writer.print_line("ctx->f{}.d = MUL_D(ctx->f{}.d, ctx->f{}.d)", fd, fs, ft);
         break;
     case InstrId::cpu_div_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
-        print_line("ctx->f{}.fl = DIV_S(ctx->f{}.fl, ctx->f{}.fl)", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl); NAN_CHECK(ctx->f{}.fl)", fs, ft);
+        writer.print_line("ctx->f{}.fl = DIV_S(ctx->f{}.fl, ctx->f{}.fl)", fd, fs, ft);
         break;
     case InstrId::cpu_div_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("CHECK_FR(ctx, {})", ft);
-        print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
-        print_line("ctx->f{}.d = DIV_D(ctx->f{}.d, ctx->f{}.d)", fd, fs, ft);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("CHECK_FR(ctx, {})", ft);
+        writer.print_line("NAN_CHECK(ctx->f{}.d); NAN_CHECK(ctx->f{}.d)", fs, ft);
+        writer.print_line("ctx->f{}.d = DIV_D(ctx->f{}.d, ctx->f{}.d)", fd, fs, ft);
         break;
     case InstrId::cpu_cvt_s_w:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.fl = CVT_S_W(ctx->f{}.u32l)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.fl = CVT_S_W(ctx->f{}.u32l)", fd, fs);
         break;
     case InstrId::cpu_cvt_d_w:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.d = CVT_D_W(ctx->f{}.u32l)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.d = CVT_D_W(ctx->f{}.u32l)", fd, fs);
         break;
     case InstrId::cpu_cvt_d_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.fl)", fs);
-        print_line("ctx->f{}.d = CVT_D_S(ctx->f{}.fl)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl)", fs);
+        writer.print_line("ctx->f{}.d = CVT_D_S(ctx->f{}.fl)", fd, fs);
         break;
     case InstrId::cpu_cvt_s_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.d)", fs);
-        print_line("ctx->f{}.fl = CVT_S_D(ctx->f{}.d)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.d)", fs);
+        writer.print_line("ctx->f{}.fl = CVT_S_D(ctx->f{}.d)", fd, fs);
         break;
     case InstrId::cpu_cvt_d_l:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.d = CVT_D_L(ctx->f{}.u64)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.d = CVT_D_L(ctx->f{}.u64)", fd, fs);
         break;
     case InstrId::cpu_cvt_l_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.d)", fs);
-        print_line("ctx->f{}.u64 = CVT_L_D(ctx->f{}.d)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.d)", fs);
+        writer.print_line("ctx->f{}.u64 = CVT_L_D(ctx->f{}.d)", fd, fs);
         break;
     case InstrId::cpu_cvt_s_l:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.fl = CVT_S_L(ctx->f{}.u64)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.fl = CVT_S_L(ctx->f{}.u64)", fd, fs);
         break;
     case InstrId::cpu_cvt_l_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("NAN_CHECK(ctx->f{}.fl)", fs);
-        print_line("ctx->f{}.u64 = CVT_L_S(ctx->f{}.fl)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("NAN_CHECK(ctx->f{}.fl)", fs);
+        writer.print_line("ctx->f{}.u64 = CVT_L_S(ctx->f{}.fl)", fd, fs);
         break;
     case InstrId::cpu_trunc_w_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = TRUNC_W_S(ctx->f{}.fl)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = TRUNC_W_S(ctx->f{}.fl)", fd, fs);
         break;
     case InstrId::cpu_trunc_w_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = TRUNC_W_D(ctx->f{}.d)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = TRUNC_W_D(ctx->f{}.d)", fd, fs);
         break;
     //case InstrId::cpu_trunc_l_s:
-    //    print_line("CHECK_FR(ctx, {})", fd);
-    //    print_line("CHECK_FR(ctx, {})", fs);
-    //    print_line("ctx->f{}.u64 = TRUNC_L_S(ctx->f{}.fl)", fd, fs);
+    //    writer.print_line("CHECK_FR(ctx, {})", fd);
+    //    writer.print_line("CHECK_FR(ctx, {})", fs);
+    //    writer.print_line("ctx->f{}.u64 = TRUNC_L_S(ctx->f{}.fl)", fd, fs);
     //    break;
     //case InstrId::cpu_trunc_l_d:
-    //    print_line("CHECK_FR(ctx, {})", fd);
-    //    print_line("CHECK_FR(ctx, {})", fs);
-    //    print_line("ctx->f{}.u64 = TRUNC_L_D(ctx->f{}.d)", fd, fs);
+    //    writer.print_line("CHECK_FR(ctx, {})", fd);
+    //    writer.print_line("CHECK_FR(ctx, {})", fs);
+    //    writer.print_line("ctx->f{}.u64 = TRUNC_L_D(ctx->f{}.d)", fd, fs);
     //    break;
     case InstrId::cpu_ctc1:
         if (cop1_cs != 31) {
             fmt::print(stderr, "Invalid FP control register for ctc1: {}\n", cop1_cs);
             return false;
         }
-        print_line("rounding_mode = ({}{}) & 0x3", ctx_gpr_prefix(rt), rt);
+        writer.print_line("rounding_mode = ({}{}) & 0x3", ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_cfc1:
         if (cop1_cs != 31) {
             fmt::print(stderr, "Invalid FP control register for cfc1: {}\n", cop1_cs);
             return false;
         }
-        print_line("{}{} = rounding_mode", ctx_gpr_prefix(rt), rt);
+        writer.print_line("{}{} = rounding_mode", ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_cvt_w_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = CVT_W_S(ctx->f{}.fl)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = CVT_W_S(ctx->f{}.fl)", fd, fs);
         break;
     case InstrId::cpu_cvt_w_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = CVT_W_D(ctx->f{}.d)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = CVT_W_D(ctx->f{}.d)", fd, fs);
         break;
     case InstrId::cpu_round_w_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = lroundf(ctx->f{}.fl)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = lroundf(ctx->f{}.fl)", fd, fs);
         break;
     case InstrId::cpu_round_w_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = lround(ctx->f{}.d)", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = lround(ctx->f{}.d)", fd, fs);
         break;
     case InstrId::cpu_ceil_w_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = S32(ceilf(ctx->f{}.fl))", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = S32(ceilf(ctx->f{}.fl))", fd, fs);
         break;
     case InstrId::cpu_ceil_w_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = S32(ceil(ctx->f{}.d))", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = S32(ceil(ctx->f{}.d))", fd, fs);
         break;
     case InstrId::cpu_floor_w_s:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = S32(floorf(ctx->f{}.fl))", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = S32(floorf(ctx->f{}.fl))", fd, fs);
         break;
     case InstrId::cpu_floor_w_d:
-        print_line("CHECK_FR(ctx, {})", fd);
-        print_line("CHECK_FR(ctx, {})", fs);
-        print_line("ctx->f{}.u32l = S32(floor(ctx->f{}.d))", fd, fs);
+        writer.print_line("CHECK_FR(ctx, {})", fd);
+        writer.print_line("CHECK_FR(ctx, {})", fs);
+        writer.print_line("ctx->f{}.u32l = S32(floor(ctx->f{}.d))", fd, fs);
         break;
     default:
         fmt::print(stderr, "Unhandled instruction: {}\n", instr.getOpcodeName());
