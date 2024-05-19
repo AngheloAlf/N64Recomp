@@ -568,18 +568,6 @@ std::unordered_set<std::string> ignored_funcs {
     "clear_IP6",
     "send",
     "kdebugserver",
-
-    // reverb
-    // "alFxPull",
-    // "alFxParam",
-    // "alFxParamHdl",
-    // "_loadOutputBuffer",
-    // "_loadBuffer",
-    // "_saveBuffer",
-    // "_filterBuffer",
-    // "_doModFunc",
-
-    "__osError",
 };
 
 std::unordered_set<std::string> renamed_funcs{

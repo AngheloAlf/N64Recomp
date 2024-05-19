@@ -288,11 +288,6 @@ bool RecompPort::analyze_function(const RecompPort::Context& context, const Reco
 			vram += 4;
 		}
 
-		if (cur_jtbl.entries.size() == 0) {
-			fmt::print("Failed to determine size of jump table at 0x{:08X} for instruction at 0x{:08X}\n", cur_jtbl.vram, cur_jtbl.jr_vram);
-			return false;
-		}
-
 		//fmt::print("Jtbl at 0x{:08X} (rom 0x{:08X}) with {} entries used by instr at 0x{:08X}\n", cur_jtbl.vram, cur_jtbl.rom, cur_jtbl.entries.size(), cur_jtbl.jr_vram);
 	}
 

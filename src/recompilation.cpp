@@ -234,17 +234,17 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
     std::string signed_imm_string;
 
     if (!at_reloc) {
-        unsigned_imm_string = fmt::format("0x{:X}", imm);
-        signed_imm_string = fmt::format("0x{:X}", (int16_t)imm);
+        unsigned_imm_string = fmt::format("{:#X}", imm);
+        signed_imm_string = fmt::format("{:#X}", (int16_t)imm);
     } else {
         switch (reloc_type) {
             case RecompPort::RelocType::R_MIPS_HI16:
-                unsigned_imm_string = fmt::format("RELOC_HI16({}, 0x{:X})", (uint32_t)func.section_index, reloc_target_section_offset);
+                unsigned_imm_string = fmt::format("RELOC_HI16({}, {:#X})", (uint32_t)func.section_index, reloc_target_section_offset);
                 signed_imm_string = "(int16_t)" + unsigned_imm_string;
                 reloc_handled = true;
                 break;
             case RecompPort::RelocType::R_MIPS_LO16:
-                unsigned_imm_string = fmt::format("RELOC_LO16({}, 0x{:X})", (uint32_t)func.section_index, reloc_target_section_offset);
+                unsigned_imm_string = fmt::format("RELOC_LO16({}, {:#X})", (uint32_t)func.section_index, reloc_target_section_offset);
                 signed_imm_string = "(int16_t)" + unsigned_imm_string;
                 reloc_handled = true;
                 break;
@@ -552,7 +552,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
                     return jtbl.jr_vram == instr_vram;
                 });
 
-            if (jtbl_find_result != stats.jump_tables.end()) {
+            if (jtbl_find_result != stats.jump_tables.end() && jtbl_find_result->entries.size() > 2) {
                 const RecompPort::JumpTable& cur_jtbl = *jtbl_find_result;
                 bool dummy_needs_link_branch, dummy_is_branch_likely;
                 size_t next_reloc_index = reloc_index;
@@ -586,7 +586,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
             });
 
             if (jump_find_result != stats.absolute_jumps.end()) {
-                print_unconditional_branch("LOOKUP_FUNC({})(rdram, ctx)", (uint64_t)(int32_t)jump_find_result->jump_target);
+                print_unconditional_branch("LOOKUP_FUNC(0x{:08X})(rdram, ctx)", (uint64_t)(int32_t)jump_find_result->jump_target);
                 // jr doesn't link so it acts like a tail call, meaning we should return directly after the jump returns
                 print_line("return");
                 break;
@@ -600,7 +600,9 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
                 break;
             }
 
-            fmt::print(stderr, "No jump table found for jr at 0x{:08X} and not tail call\n", instr_vram);
+            fmt::print("`jr` tail call in {}\n", func.name);
+            print_unconditional_branch("LOOKUP_FUNC({}{})(rdram, ctx)", ctx_gpr_prefix(rs), rs);
+            print_line("return");
         }
         break;
     case InstrId::cpu_syscall:
