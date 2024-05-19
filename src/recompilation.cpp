@@ -19,10 +19,64 @@ std::string_view ctx_gpr_prefix(int reg) {
 }
 
 class InstructionWriter {
+    const RecompPort::Context& context;
+    const RecompPort::Config& config;
+    const RecompPort::Function& func;
+    const RecompPort::FunctionStats& stats;
+    const std::unordered_set<uint32_t>& skipped_insns;
+    size_t instr_index;
+    const std::vector<rabbitizer::InstructionCpu>& instructions;
     std::ofstream& output_file;
+    bool indent;
+    bool emit_link_branch;
+    int link_branch_index;
+    size_t reloc_index;
+    bool& needs_link_branch;
+    bool& is_branch_likely;
+    std::span<std::vector<uint32_t>> static_funcs_out;
+    uint32_t func_vram_end;
+
+    const RecompPort::Section& section = context.sections[func.section_index];
+    const rabbitizer::InstructionCpu& instr = instructions[instr_index];
 
 public:
-    InstructionWriter(std::ofstream& out_file) : output_file(out_file) {}
+    InstructionWriter(
+        const RecompPort::Context& context,
+        const RecompPort::Config& config,
+        const RecompPort::Function& func,
+        const RecompPort::FunctionStats& stats,
+        const std::unordered_set<uint32_t>& skipped_insns,
+        size_t instr_index,
+        const std::vector<rabbitizer::InstructionCpu>& instructions,
+        std::ofstream& output_file,
+        bool indent,
+        bool emit_link_branch,
+        int link_branch_index,
+        size_t reloc_index,
+        bool& needs_link_branch,
+        bool& is_branch_likely,
+        std::span<std::vector<uint32_t>> static_funcs_out,
+        uint32_t func_vram_end
+    ) :
+        context(context),
+        config(config),
+        func(func),
+        stats(stats),
+        skipped_insns(skipped_insns),
+        instr_index(instr_index),
+        instructions(instructions),
+        output_file(output_file),
+        indent(indent),
+        emit_link_branch(emit_link_branch),
+        link_branch_index(link_branch_index),
+        reloc_index(reloc_index),
+        needs_link_branch(needs_link_branch),
+        is_branch_likely(is_branch_likely),
+        static_funcs_out(static_funcs_out),
+        func_vram_end(func_vram_end),
+        section(context.sections[func.section_index]),
+        instr(instructions[instr_index])
+         {}
 
     void print_indent() {
         fmt::print(output_file, "    ");
@@ -129,7 +183,7 @@ public:
             }
         }
         needs_link_branch = link_branch;
-        writer.print_unconditional_branch("{}(rdram, ctx)", jal_target_name);
+        print_unconditional_branch("{}(rdram, ctx)", jal_target_name);
         return true;
     };
 
@@ -139,8 +193,8 @@ public:
             if (context.functions_by_vram.find(branch_target) != context.functions_by_vram.end()) {
                 fmt::print(output_file, "{{\n    ");
                 fmt::print("Tail call in {} to 0x{:08X}\n", func.name, branch_target);
-                writer.print_func_call(branch_target, false);
-                writer.print_line("return");
+                print_func_call(branch_target, false);
+                print_line("return");
                 fmt::print(output_file, ";\n    }}\n");
                 return;
             }
@@ -153,7 +207,7 @@ public:
             bool dummy_needs_link_branch;
             bool dummy_is_branch_likely;
             size_t next_reloc_index = reloc_index;
-            uint32_t next_vram = instr_vram + 4;
+            uint32_t next_vram = instr.getVram() + 4;
             if (reloc_index + 1 < section.relocs.size() && next_vram > section.relocs[reloc_index].address) {
                 next_reloc_index++;
             }
@@ -172,7 +226,6 @@ public:
 
 // Major TODO, this function grew very organically and needs to be cleaned up. Ideally, it'll get split up into some sort of lookup table grouped by similar instruction types.
 bool process_instruction(const RecompPort::Context& context, const RecompPort::Config& config, const RecompPort::Function& func, const RecompPort::FunctionStats& stats, const std::unordered_set<uint32_t>& skipped_insns, size_t instr_index, const std::vector<rabbitizer::InstructionCpu>& instructions, std::ofstream& output_file, bool indent, bool emit_link_branch, int link_branch_index, size_t reloc_index, bool& needs_link_branch, bool& is_branch_likely, std::span<std::vector<uint32_t>> static_funcs_out) {
-    InstructionWriter writer{output_file};
     const auto& section = context.sections[func.section_index];
     const auto& instr = instructions[instr_index];
     needs_link_branch = false;
@@ -201,6 +254,24 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
     uint32_t reloc_target_section_offset = 0;
 
     uint32_t func_vram_end = func.vram + func.words.size() * sizeof(func.words[0]);
+    InstructionWriter writer {
+        context,
+        config,
+        func,
+        stats,
+        skipped_insns,
+        instr_index,
+        instructions,
+        output_file,
+        indent,
+        emit_link_branch,
+        link_branch_index,
+        reloc_index,
+        needs_link_branch,
+        is_branch_likely,
+        static_funcs_out,
+        func_vram_end
+    };
 
     // Check if this instruction has a reloc.
     if (section.relocatable && section.relocs.size() > 0 && section.relocs[reloc_index].address == instr_vram) {
