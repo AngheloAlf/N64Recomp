@@ -562,19 +562,19 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
                 }
                 process_instruction(context, config, func, stats, skipped_insns, instr_index + 1, instructions, output_file, false, false, link_branch_index, next_reloc_index, dummy_needs_link_branch, dummy_is_branch_likely, static_funcs_out);
                 print_indent();
-                fmt::print(output_file, "switch ({}{}) {{\n", ctx_gpr_prefix(rs), rs);
+                fmt::print(output_file, "switch (U32({}{})) {{\n", ctx_gpr_prefix(rs), rs);
                 std::unordered_set<uint32_t> emitted_cases;
                 emitted_cases.reserve(cur_jtbl.entries.size());
                 for (size_t entry_index = 0; entry_index < cur_jtbl.entries.size(); entry_index++) {
                     if (emitted_cases.contains(cur_jtbl.entries[entry_index])) {
-                        break;
+                        continue;
                     }
                     print_indent();
                     print_line("case 0x{:08X}: goto L_{:08X}; break", cur_jtbl.entries[entry_index], cur_jtbl.entries[entry_index]);
                     emitted_cases.insert(cur_jtbl.entries[entry_index]);
                 }
                 print_indent();
-                print_line("default: switch_error(__func__, 0x{:08X}, 0x{:08X})", instr_vram, cur_jtbl.vram);
+                print_line("default: switch_error(__func__, 0x{:08X}, 0x{:08X}, {}{})", instr_vram, cur_jtbl.vram, ctx_gpr_prefix(rs), rs);
                 print_indent();
                 fmt::print(output_file, "}}\n");
                 break;
