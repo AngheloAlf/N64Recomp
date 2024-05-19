@@ -158,7 +158,6 @@ std::string_view c0_reg_write_action(int cop0_reg) {
         fmt::print(stderr, "Unhandled mtc0: {}\n", cop0_reg);
         throw std::runtime_error("Unhandled mtc0");
     }
-
 }
 
 std::optional<int> get_rsp_element(const rabbitizer::InstructionRsp& instr) {

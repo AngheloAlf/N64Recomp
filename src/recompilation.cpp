@@ -234,17 +234,17 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
     std::string signed_imm_string;
 
     if (!at_reloc) {
-        unsigned_imm_string = fmt::format("{:#X}", imm);
-        signed_imm_string = fmt::format("{:#X}", (int16_t)imm);
+        unsigned_imm_string = fmt::format("0x{:X}", imm);
+        signed_imm_string = fmt::format("0x{:X}", (int16_t)imm);
     } else {
         switch (reloc_type) {
             case RecompPort::RelocType::R_MIPS_HI16:
-                unsigned_imm_string = fmt::format("RELOC_HI16({}, {:#X})", (uint32_t)func.section_index, reloc_target_section_offset);
+                unsigned_imm_string = fmt::format("RELOC_HI16({}, 0x{:X})", (uint32_t)func.section_index, reloc_target_section_offset);
                 signed_imm_string = "(int16_t)" + unsigned_imm_string;
                 reloc_handled = true;
                 break;
             case RecompPort::RelocType::R_MIPS_LO16:
-                unsigned_imm_string = fmt::format("RELOC_LO16({}, {:#X})", (uint32_t)func.section_index, reloc_target_section_offset);
+                unsigned_imm_string = fmt::format("RELOC_LO16({}, 0x{:X})", (uint32_t)func.section_index, reloc_target_section_offset);
                 signed_imm_string = "(int16_t)" + unsigned_imm_string;
                 reloc_handled = true;
                 break;
@@ -290,18 +290,6 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         break;
     case InstrId::cpu_add:
     case InstrId::cpu_addu:
-        {
-            // Check if this addu belongs to a jump table load
-            auto find_result = std::find_if(stats.jump_tables.begin(), stats.jump_tables.end(),
-                [instr_vram](const RecompPort::JumpTable& jtbl) {
-                return jtbl.addu_vram == instr_vram;
-            });
-            // If so, create a temp to preserve the addend register's value
-            if (find_result != stats.jump_tables.end()) {
-                const RecompPort::JumpTable& cur_jtbl = *find_result;
-                print_line("gpr jr_addend_{:08X} = {}{}", cur_jtbl.jr_vram, ctx_gpr_prefix(cur_jtbl.addend_reg), cur_jtbl.addend_reg);
-            }
-        }
         print_line("{}{} = ADD32({}{}, {}{})", ctx_gpr_prefix(rd), rd, ctx_gpr_prefix(rs), rs, ctx_gpr_prefix(rt), rt);
         break;
     case InstrId::cpu_daddu:
@@ -574,10 +562,16 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
                 }
                 process_instruction(context, config, func, stats, skipped_insns, instr_index + 1, instructions, output_file, false, false, link_branch_index, next_reloc_index, dummy_needs_link_branch, dummy_is_branch_likely, static_funcs_out);
                 print_indent();
-                fmt::print(output_file, "switch (jr_addend_{:08X} >> 2) {{\n", cur_jtbl.jr_vram);
+                fmt::print(output_file, "switch ({}{}) {{\n", ctx_gpr_prefix(rs), rs);
+                std::unordered_set<uint32_t> emitted_cases;
+                emitted_cases.reserve(cur_jtbl.entries.size());
                 for (size_t entry_index = 0; entry_index < cur_jtbl.entries.size(); entry_index++) {
+                    if (emitted_cases.contains(cur_jtbl.entries[entry_index])) {
+                        break;
+                    }
                     print_indent();
-                    print_line("case {}: goto L_{:08X}; break", entry_index, cur_jtbl.entries[entry_index]);
+                    print_line("case 0x{:08X}: goto L_{:08X}; break", cur_jtbl.entries[entry_index], cur_jtbl.entries[entry_index]);
+                    emitted_cases.insert(cur_jtbl.entries[entry_index]);
                 }
                 print_indent();
                 print_line("default: switch_error(__func__, 0x{:08X}, 0x{:08X})", instr_vram, cur_jtbl.vram);
@@ -1138,7 +1132,7 @@ bool RecompPort::recompile_function(const RecompPort::Context& context, const Re
 
         // Add jump table labels into function
         for (const auto& jtbl : stats.jump_tables) {
-            skipped_insns.insert(jtbl.lw_vram);
+            // skipped_insns.insert(jtbl.lw_vram);
             for (uint32_t jtbl_entry : jtbl.entries) {
                 branch_labels.insert(jtbl_entry);
             }
