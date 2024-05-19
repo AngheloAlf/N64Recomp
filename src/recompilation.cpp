@@ -18,75 +18,31 @@ std::string_view ctx_gpr_prefix(int reg) {
     return "";
 }
 
-// Major TODO, this function grew very organically and needs to be cleaned up. Ideally, it'll get split up into some sort of lookup table grouped by similar instruction types.
-bool process_instruction(const RecompPort::Context& context, const RecompPort::Config& config, const RecompPort::Function& func, const RecompPort::FunctionStats& stats, const std::unordered_set<uint32_t>& skipped_insns, size_t instr_index, const std::vector<rabbitizer::InstructionCpu>& instructions, std::ofstream& output_file, bool indent, bool emit_link_branch, int link_branch_index, size_t reloc_index, bool& needs_link_branch, bool& is_branch_likely, std::span<std::vector<uint32_t>> static_funcs_out) {
-    const auto& section = context.sections[func.section_index];
-    const auto& instr = instructions[instr_index];
-    needs_link_branch = false;
-    is_branch_likely = false;
+class InstructionWriter {
+    std::ofstream& output_file;
 
-    // Output a comment with the original instruction
-    if (instr.isBranch() || instr.getUniqueId() == InstrId::cpu_j) {
-        fmt::print(output_file, "    // {}\n", instr.disassemble(0, fmt::format("L_{:08X}", (uint32_t)instr.getBranchVramGeneric())));
-    } else if (instr.getUniqueId() == InstrId::cpu_jal) {
-        fmt::print(output_file, "    // {}\n", instr.disassemble(0, fmt::format("0x{:08X}", (uint32_t)instr.getBranchVramGeneric())));
-    } else {
-        fmt::print(output_file, "    // {}\n", instr.disassemble(0));
-    }
+public:
+    InstructionWriter(std::ofstream& out_file) : output_file(out_file) {}
 
-    uint32_t instr_vram = instr.getVram();
-
-    if (skipped_insns.contains(instr_vram)) {
-        return true;
-    }
-
-
-    bool at_reloc = false;
-    bool reloc_handled = false;
-    RecompPort::RelocType reloc_type = RecompPort::RelocType::R_MIPS_NONE;
-    uint32_t reloc_section = 0;
-    uint32_t reloc_target_section_offset = 0;
-
-    uint32_t func_vram_end = func.vram + func.words.size() * sizeof(func.words[0]);
-
-    // Check if this instruction has a reloc.
-    if (section.relocatable && section.relocs.size() > 0 && section.relocs[reloc_index].address == instr_vram) {
-        // Get the reloc data for this instruction
-        const auto& reloc = section.relocs[reloc_index];
-        reloc_section = reloc.target_section;
-        // Some symbols are in a nonexistent section (e.g. absolute symbols), so check that the section is valid before doing anything else.
-        // Absolute symbols will never need to be relocated so it's safe to skip this.
-        if (reloc_section < context.sections.size()) {
-            // Ignore this reloc if it points to a different section.
-            // Also check if the reloc points to the bss section since that will also be relocated with the section.
-            if (reloc_section == func.section_index || reloc_section == section.bss_section_index) {
-                // Record the reloc's data.
-                reloc_type = reloc.type;
-                reloc_target_section_offset = reloc.target_address - section.ram_addr;
-                // Ignore all relocs that aren't HI16 or LO16.
-                if (reloc_type == RecompPort::RelocType::R_MIPS_HI16 || reloc_type == RecompPort::RelocType::R_MIPS_LO16) {
-                    at_reloc = true;
-                }
-            }
-        }
-    }
-
-    auto print_indent = [&]() {
+    void print_indent() {
         fmt::print(output_file, "    ");
     };
 
-    auto print_line = [&]<typename... Ts>(fmt::format_string<Ts...> fmt_str, Ts ...args) {
+    template <typename... Ts>
+    void print_line(fmt::format_string<Ts...> fmt_str, Ts ...args) {
         print_indent();
         fmt::vprint(output_file, fmt_str, fmt::make_format_args(args...));
         fmt::print(output_file, ";\n");
     };
 
-    auto print_branch_condition = [&]<typename... Ts>(fmt::format_string<Ts...> fmt_str, Ts ...args) {
+    template <typename... Ts>
+    void print_branch_condition(fmt::format_string<Ts...> fmt_str, Ts ...args) {
         fmt::vprint(output_file, fmt_str, fmt::make_format_args(args...));
         fmt::print(output_file, " ");
     };
 
-    auto print_unconditional_branch = [&]<typename... Ts>(fmt::format_string<Ts...> fmt_str, Ts ...args) {
+    template <typename... Ts>
+    void print_unconditional_branch(fmt::format_string<Ts...> fmt_str, Ts ...args) {
         if (instr_index < instructions.size() - 1) {
             bool dummy_needs_link_branch;
             bool dummy_is_branch_likely;
@@ -106,7 +62,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         }
     };
 
-    auto print_func_call = [&](uint32_t target_func_vram, bool link_branch = true) {
+    bool print_func_call(uint32_t target_func_vram, bool link_branch = true) {
         const auto matching_funcs_find = context.functions_by_vram.find(target_func_vram);
         std::string jal_target_name;
         uint32_t section_vram_start = section.ram_addr;
@@ -177,7 +133,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         return true;
     };
 
-    auto print_branch = [&](uint32_t branch_target) {
+    void print_branch(uint32_t branch_target) {
         if (branch_target < func.vram || branch_target >= func_vram_end) {
             // FIXME: how to deal with static functions?
             if (context.functions_by_vram.find(branch_target) != context.functions_by_vram.end()) {
@@ -211,6 +167,61 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
         }
         fmt::print(output_file, ";\n    }}\n");
     };
+
+};
+
+// Major TODO, this function grew very organically and needs to be cleaned up. Ideally, it'll get split up into some sort of lookup table grouped by similar instruction types.
+bool process_instruction(const RecompPort::Context& context, const RecompPort::Config& config, const RecompPort::Function& func, const RecompPort::FunctionStats& stats, const std::unordered_set<uint32_t>& skipped_insns, size_t instr_index, const std::vector<rabbitizer::InstructionCpu>& instructions, std::ofstream& output_file, bool indent, bool emit_link_branch, int link_branch_index, size_t reloc_index, bool& needs_link_branch, bool& is_branch_likely, std::span<std::vector<uint32_t>> static_funcs_out) {
+    const auto& section = context.sections[func.section_index];
+    const auto& instr = instructions[instr_index];
+    needs_link_branch = false;
+    is_branch_likely = false;
+
+    // Output a comment with the original instruction
+    if (instr.isBranch() || instr.getUniqueId() == InstrId::cpu_j) {
+        fmt::print(output_file, "    // {}\n", instr.disassemble(0, fmt::format("L_{:08X}", (uint32_t)instr.getBranchVramGeneric())));
+    } else if (instr.getUniqueId() == InstrId::cpu_jal) {
+        fmt::print(output_file, "    // {}\n", instr.disassemble(0, fmt::format("0x{:08X}", (uint32_t)instr.getBranchVramGeneric())));
+    } else {
+        fmt::print(output_file, "    // {}\n", instr.disassemble(0));
+    }
+
+    uint32_t instr_vram = instr.getVram();
+
+    if (skipped_insns.contains(instr_vram)) {
+        return true;
+    }
+
+
+    bool at_reloc = false;
+    bool reloc_handled = false;
+    RecompPort::RelocType reloc_type = RecompPort::RelocType::R_MIPS_NONE;
+    uint32_t reloc_section = 0;
+    uint32_t reloc_target_section_offset = 0;
+
+    uint32_t func_vram_end = func.vram + func.words.size() * sizeof(func.words[0]);
+
+    // Check if this instruction has a reloc.
+    if (section.relocatable && section.relocs.size() > 0 && section.relocs[reloc_index].address == instr_vram) {
+        // Get the reloc data for this instruction
+        const auto& reloc = section.relocs[reloc_index];
+        reloc_section = reloc.target_section;
+        // Some symbols are in a nonexistent section (e.g. absolute symbols), so check that the section is valid before doing anything else.
+        // Absolute symbols will never need to be relocated so it's safe to skip this.
+        if (reloc_section < context.sections.size()) {
+            // Ignore this reloc if it points to a different section.
+            // Also check if the reloc points to the bss section since that will also be relocated with the section.
+            if (reloc_section == func.section_index || reloc_section == section.bss_section_index) {
+                // Record the reloc's data.
+                reloc_type = reloc.type;
+                reloc_target_section_offset = reloc.target_address - section.ram_addr;
+                // Ignore all relocs that aren't HI16 or LO16.
+                if (reloc_type == RecompPort::RelocType::R_MIPS_HI16 || reloc_type == RecompPort::RelocType::R_MIPS_LO16) {
+                    at_reloc = true;
+                }
+            }
+        }
+    }
 
     if (indent) {
         print_indent();
