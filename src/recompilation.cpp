@@ -574,7 +574,7 @@ bool process_instruction(const RecompPort::Context& context, const RecompPort::C
                     emitted_cases.insert(cur_jtbl.entries[entry_index]);
                 }
                 print_indent();
-                print_line("default: switch_error(__func__, 0x{:08X}, 0x{:08X}, {}{})", instr_vram, cur_jtbl.vram, ctx_gpr_prefix(rs), rs);
+                print_line("default: SWITCH_ERROR(0x{:08X}, 0x{:08X}, {}{})", instr_vram, cur_jtbl.vram, ctx_gpr_prefix(rs), rs);
                 print_indent();
                 fmt::print(output_file, "}}\n");
                 break;
